@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
+import nvtx
 
 """
     MLP Layer used after graph vector representation

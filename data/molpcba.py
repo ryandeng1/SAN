@@ -23,7 +23,8 @@ def laplace_decomp(graph, max_freqs):
 
     # Laplacian
     n = g.number_of_nodes()
-    A = g.adjacency_matrix_scipy(return_edge_ids=False).astype(float)
+    # A = g.adjacency_matrix_scipy(return_edge_ids=False).astype(float)
+    A = g.adjacency_matrix(scipy_fmt="csr").astype(float)
     N = sp.diags(dgl.backend.asnumpy(g.in_degrees()).clip(1) ** -0.5, dtype=float)
     L = sp.eye(g.number_of_nodes()) - N * A * N
 

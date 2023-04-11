@@ -16,10 +16,23 @@ import numpy as np
 import networkx as nx
 import hashlib
 
-
+# added by ryan
+from dgl import save_graphs, load_graphs
 
 class MoleculeDGL(torch.utils.data.Dataset):
+    def __init__(self, data):
+        self.data = data
+        self.graph_lists = []
+        self.graph_labels = []
+        # self.n_samples = len(self.data)
+        self.graph_lists = self.data[0]
+        self.graph_labels = self.data[1]['g_label'].tolist()
+        self.n_samples = len(self.graph_lists)
+        # self._prepare()
+
+    """
     def __init__(self, data_dir, split, num_graphs=None):
+        print("MOLECULE DGL HOW?")
         self.data_dir = data_dir
         self.split = split
         self.num_graphs = num_graphs
@@ -35,7 +48,6 @@ class MoleculeDGL(torch.utils.data.Dataset):
 
             assert len(self.data)==num_graphs, "Sample num_graphs again; available idx: train/val/test => 10k/1k/1k"
         
-        """
         data is a list of Molecule dict objects with following attributes
         
           molecule = data[idx]
@@ -43,16 +55,16 @@ class MoleculeDGL(torch.utils.data.Dataset):
         ; molecule['atom_type'] : tensor of size N, each element is an atom type, an integer between 0 and num_atom_type
         ; molecule['bond_type'] : tensor of size N x N, each element is a bond type, an integer between 0 and num_bond_type
         ; molecule['logP_SA_cycle_normalized'] : the chemical property to regress, a float variable
-        """
         
         self.graph_lists = []
         self.graph_labels = []
         self.n_samples = len(self.data)
         self._prepare()
+    """
     
     def _prepare(self):
-        print("preparing %d graphs for the %s set..." % (self.num_graphs, self.split.upper()))
-        
+        # print("preparing %d graphs for the %s set..." % (self.num_graphs, self.split.upper()))
+        self.data = self.data[0]
         for molecule in self.data:
             node_features = molecule['atom_type'].long()
             
@@ -122,7 +134,8 @@ def laplace_decomp(g, max_freqs):
 
     # Laplacian
     n = g.number_of_nodes()
-    A = g.adjacency_matrix_scipy(return_edge_ids=False).astype(float)
+    # A = g.adjacency_matrix_scipy(return_edge_ids=False).astype(float)
+    A = g.adjacency_matrix(scipy_fmt="csr").astype(float) 
     N = sp.diags(dgl.backend.asnumpy(g.in_degrees()).clip(1) ** -0.5, dtype=float)
     L = sp.eye(g.number_of_nodes()) - N * A * N
 
@@ -209,16 +222,27 @@ class MoleculeDataset(torch.utils.data.Dataset):
             Loading ZINC dataset
         """
         start = time.time()
-        print("[I] Loading dataset %s..." % (name))
+        print("[I] MoleculeDataset Loading dataset %s..." % (name))
         self.name = name
         data_dir = 'data/molecules/'
+        train_ = load_graphs(data_dir + "ZincDGL_train.bin")
+        self.train = MoleculeDGL(train_)
+        val_ = load_graphs(data_dir + "ZincDGL_valid.bin")
+        self.val = MoleculeDGL(val_)
+        test_ = load_graphs(data_dir + "ZincDGL_test.bin")
+        self.test = MoleculeDGL(test_)
+        self.num_atom_type = 28 # known meta-info about the zinc dataset; can be calculated as well
+        self.num_bond_type = 4 # known meta-info about the zinc dataset; can be calculated as well
+        """
         with open(data_dir+name+'.pkl',"rb") as f:
             f = pickle.load(f)
             self.train = f[0]
+            print(self.train)
             self.val = f[1]
             self.test = f[2]
             self.num_atom_type = f[3]
             self.num_bond_type = f[4]
+        """
         print('train, test, val sizes :',len(self.train),len(self.test),len(self.val))
         print("[I] Finished loading.")
         print("[I] Data load time: {:.4f}s".format(time.time()-start))
@@ -226,7 +250,7 @@ class MoleculeDataset(torch.utils.data.Dataset):
 
     def collate(self, samples):
         graphs, labels = map(list, zip(*samples))
-        labels = torch.tensor(np.array(labels)).unsqueeze(1)
+        labels = torch.tensor(np.array(labels, dtype=np.float32)).unsqueeze(1)
         batched_graph = dgl.batch(graphs)
 
         return batched_graph, labels

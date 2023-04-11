@@ -70,28 +70,25 @@ class MultiHeadAttentionLayer(nn.Module):
         self.num_heads = num_heads
         self.gamma = gamma
         self.full_graph=full_graph
+        print("In dim: ", in_dim, " Out dim: ", out_dim, " num heads: ", num_heads)
         
         if use_bias:
             self.Q = nn.Linear(in_dim, out_dim * num_heads, bias=True)
             self.K = nn.Linear(in_dim, out_dim * num_heads, bias=True)
-            self.E = nn.Linear(in_dim, out_dim * num_heads, bias=True)
             
             if self.full_graph:
                 self.Q_2 = nn.Linear(in_dim, out_dim * num_heads, bias=True)
                 self.K_2 = nn.Linear(in_dim, out_dim * num_heads, bias=True)
-                self.E_2 = nn.Linear(in_dim, out_dim * num_heads, bias=True)
             
             self.V = nn.Linear(in_dim, out_dim * num_heads, bias=True)
             
         else:
             self.Q = nn.Linear(in_dim, out_dim * num_heads, bias=False)
             self.K = nn.Linear(in_dim, out_dim * num_heads, bias=False)
-            self.E = nn.Linear(in_dim, out_dim * num_heads, bias=False)
             
             if self.full_graph:
                 self.Q_2 = nn.Linear(in_dim, out_dim * num_heads, bias=False)
                 self.K_2 = nn.Linear(in_dim, out_dim * num_heads, bias=False)
-                self.E_2 = nn.Linear(in_dim, out_dim * num_heads, bias=False)
                 
             self.V = nn.Linear(in_dim, out_dim * num_heads, bias=False)
     
@@ -119,12 +116,14 @@ class MultiHeadAttentionLayer(nn.Module):
             g.apply_edges(scaling('score', np.sqrt(self.out_dim)))
         
         # Use available edge features to modify the scores for edges
+        """
         with nvtx.annotate("apply_edges E matrix real "):
             g.apply_edges(imp_exp_attn('score', 'E'), edges=real_ids)
         
         if self.full_graph:
             with nvtx.annotate("apply_edges E matrix fake "):
                 g.apply_edges(imp_exp_attn('score', 'E_2'), edges=fake_ids)
+        """
     
         if self.full_graph:
             # softmax and scaling by gamma
@@ -146,16 +145,14 @@ class MultiHeadAttentionLayer(nn.Module):
             g.send_and_recv(eids, fn.copy_e('score_soft', 'score_soft'), fn.sum('score_soft', 'z'))
     
     @nvtx.annotate("graph_transformer forward", color="red") 
-    def forward(self, g, h, e):
+    def forward(self, g, h):
         
         Q_h = self.Q(h)
         K_h = self.K(h)
-        E = self.E(e)
         
         if self.full_graph:
             Q_2h = self.Q_2(h)
             K_2h = self.K_2(h)
-            E_2 = self.E_2(e)
             
         V_h = self.V(h)
 
@@ -164,13 +161,11 @@ class MultiHeadAttentionLayer(nn.Module):
         # get projections for multi-head attention
         g.ndata['Q_h'] = Q_h.view(-1, self.num_heads, self.out_dim)
         g.ndata['K_h'] = K_h.view(-1, self.num_heads, self.out_dim)
-        g.edata['E'] = E.view(-1, self.num_heads, self.out_dim)
         
         
         if self.full_graph:
             g.ndata['Q_2h'] = Q_2h.view(-1, self.num_heads, self.out_dim)
             g.ndata['K_2h'] = K_2h.view(-1, self.num_heads, self.out_dim)
-            g.edata['E_2'] = E_2.view(-1, self.num_heads, self.out_dim)
         
         g.ndata['V_h'] = V_h.view(-1, self.num_heads, self.out_dim)
 
@@ -217,11 +212,11 @@ class GraphTransformerLayer(nn.Module):
         if self.batch_norm:
             self.batch_norm2_h = nn.BatchNorm1d(out_dim)
         
-    def forward(self, g, h, e):
+    def forward(self, g, h):
         h_in1 = h # for first residual connection
         
         # multi-head attention out
-        h_attn_out = self.attention(g, h, e)
+        h_attn_out = self.attention(g, h)
         
         #Concat multi-head outputs
         h = h_attn_out.view(-1, self.out_channels)
@@ -256,7 +251,7 @@ class GraphTransformerLayer(nn.Module):
         if self.batch_norm:
             h = self.batch_norm2_h(h)         
 
-        return h, e
+        return h
         
     def __repr__(self):
         return '{}(in_channels={}, out_channels={}, heads={}, residual={})'.format(self.__class__.__name__,

@@ -11,58 +11,26 @@ import torch.nn.functional as F
 from scipy import sparse as sp
 import numpy as np
 import networkx as nx
-import dgl.data 
 
 import hashlib
+from dgl.data import CoraGraphDataset
 
 
-class load_SBMsDataSetDGL(torch.utils.data.Dataset):
+class CoraDatasetDGL(torch.utils.data.Dataset):
 
-    def __init__(self,
-                 data_dir,
-                 name,
-                 split):
+    def __init__(self, g, mask_key):
+        feat = g.ndata['feat']
+        ndata = g.ndata[mask_key]
+        label = g.ndata['label']
+        train_mask = g.ndata['train_mask']
+        val_mask = g.ndata['val_mask']
+        test_mask = g.ndata['test_mask']
 
-        self.split = split
-        # TODO: assumed pattern dataset
-        self.dataset = dgl.data.PATTERNDataset(mode=split)
-        """
-        self.is_test = split.lower() in ['test', 'val'] 
-        with open(os.path.join(data_dir, name + '_%s.pkl' % self.split), 'rb') as f:
-            self.dataset = pickle.load(f)
-        """
-        print(type(self.dataset))
-        self.node_labels = [g.ndata['label'] for g in self.dataset]
-        self.graph_lists = self.dataset
-        self.n_samples = len(self.dataset)
-        # self._prepare()
+        label = g.ndata['label']
 
-    
-
-    def _prepare(self):
-
-        print("preparing %d graphs for the %s set..." % (self.n_samples, self.split.upper()))
-
-        for data in self.dataset:
-
-            node_features = data.node_feat
-            edge_list = (data.W != 0).nonzero()  # converting adj matrix to edge_list
-
-            # Create the DGL Graph
-            g = dgl.DGLGraph()
-            g.add_nodes(node_features.size(0))
-            g.ndata['feat'] = node_features.long()
-            for src, dst in edge_list:
-                g.add_edges(src.item(), dst.item())
-
-            # adding edge features for Residual Gated ConvNet
-            #edge_feat_dim = g.ndata['feat'].size(1) # dim same as node feature dim
-            edge_feat_dim = 1 # dim same as node feature dim
-            g.edata['feat'] = torch.ones(g.number_of_edges(), edge_feat_dim)
-
-            self.graph_lists.append(g)
-            self.node_labels.append(data.node_label)
-
+        self.node_labels = [label]
+        self.graph_lists = [g]
+        self.n_samples = 1
 
     def __len__(self):
         """Return the number of graphs in the dataset."""
@@ -83,32 +51,27 @@ class load_SBMsDataSetDGL(torch.utils.data.Dataset):
         """
         return self.graph_lists[idx], self.node_labels[idx]
 
+class CoraDataset(torch.utils.data.Dataset):
+    def __init__(self):
+        dataset = CoraGraphDataset()
+        self.dataset = dataset
+        self.g = dataset[0]
+        self.name = "CORA"
 
-class SBMsDatasetDGL(torch.utils.data.Dataset):
+    def _laplace_decomp(self, max_freqs):
+        self.g = laplace_decomp(self.g, max_freqs)
 
-    def __init__(self, name):
-        """
-            TODO
-        """
-        start = time.time()
-        print("[I] Loading data ...")
-        self.name = name
-        data_dir = 'data/SBMs'
-        self.train = load_SBMsDataSetDGL(data_dir, name, split='train')
-        self.test = load_SBMsDataSetDGL(data_dir, name, split='test')
-        self.val = load_SBMsDataSetDGL(data_dir, name, split='valid')
-        print("[I] Finished loading.")
-        print("[I] Data load time: {:.4f}s".format(time.time()-start))
+    def _make_full_graph(self):
+        self.g = make_full_graph(self.g)
 
-
+    def _add_edge_laplace_feats(self):
+        self.g = add_edge_laplace_feats(self.g)
 
 def laplace_decomp(g, max_freqs):
-
-
     # Laplacian
     n = g.number_of_nodes()
     # A = g.adjacency_matrix_scipy(return_edge_ids=False).astype(float)
-    A = g.adjacency_matrix(scipy_fmt="csr").astype(float) 
+    A = g.adjacency_matrix(scipy_fmt="csr").astype(float)
     N = sp.diags(dgl.backend.asnumpy(g.in_degrees()).clip(1) ** -0.5, dtype=float)
     L = sp.eye(g.number_of_nodes()) - N * A * N
 
@@ -125,7 +88,6 @@ def laplace_decomp(g, max_freqs):
     else:
         g.ndata['EigVecs']= EigVecs
         
-    
     #Save eigenvales and pad
     EigVals = torch.from_numpy(np.sort(np.abs(np.real(EigVals)))) #Abs value is taken because numpy sometimes computes the first eigenvalue approaching 0 from the negative
     
@@ -138,6 +100,7 @@ def laplace_decomp(g, max_freqs):
     #Save EigVals node features
     g.ndata['EigVals'] = EigVals.repeat(g.number_of_nodes(),1).unsqueeze(2)
     
+    print("LAPLACE DECOMP: ", g.ndata.keys())
     return g
 
 
@@ -149,6 +112,8 @@ def make_full_graph(g):
 
     #Here we copy over the node feature data and laplace encodings
     full_g.ndata['feat'] = g.ndata['feat']
+    for k in g.ndata:
+        full_g.ndata[k] = g.ndata[k]
 
     try:
         full_g.ndata['EigVecs'] = g.ndata['EigVecs']
@@ -161,9 +126,10 @@ def make_full_graph(g):
     full_g.edata['real']=torch.zeros(full_g.number_of_edges(), dtype=torch.long)
     
     #Copy real edge data over
-    full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['feat'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
-    full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['real'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
+    # full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['feat'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
+    # full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['real'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
     
+    print("EDGES: ", full_g.edges(), full_g.edata)
     return full_g
 
 
@@ -199,17 +165,12 @@ class SBMsDataset(torch.utils.data.Dataset):
         print("[I] Loading dataset %s..." % (name))
         self.name = name
         data_dir = 'data/SBMs/'
-        """
         with open(data_dir+name+'.pkl',"rb") as f:
             f = pickle.load(f)
             self.train = f[0]
             self.val = f[1]
             self.test = f[2]
-        """
                 
-        self.train = load_SBMsDataSetDGL(data_dir, name, split='train')
-        self.test = load_SBMsDataSetDGL(data_dir, name, split='test')
-        self.val = load_SBMsDataSetDGL(data_dir, name, split='valid')
         print('train, test, val sizes :',len(self.train),len(self.test),len(self.val))
         print("[I] Finished loading.")
         print("[I] Data load time: {:.4f}s".format(time.time()-start))
