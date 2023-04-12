@@ -70,7 +70,6 @@ class MultiHeadAttentionLayer(nn.Module):
         self.num_heads = num_heads
         self.gamma = gamma
         self.full_graph=full_graph
-        print("In dim: ", in_dim, " Out dim: ", out_dim, " num heads: ", num_heads)
         
         if use_bias:
             self.Q = nn.Linear(in_dim, out_dim * num_heads, bias=True)

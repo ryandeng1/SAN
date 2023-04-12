@@ -1,7 +1,7 @@
 {
     "gpu": {
         "use": true,
-        "id": 0
+        "id": 1
     },
 
     "model": "GraphTransformer",
@@ -36,8 +36,8 @@
         "LPE_n_heads": 4,
 
         "GT_layers": 5,
-        "GT_hidden_dim": 304,
-        "GT_out_dim": 304,
+        "GT_hidden_dim": 16,
+        "GT_out_dim": 16,
         "GT_n_heads": 4,
 
         "residual": true,

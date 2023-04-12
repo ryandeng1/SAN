@@ -37,7 +37,7 @@ def train_epoch(model, optimizer, device, g, epoch, LPE):
     sign_flip[sign_flip>=0.5] = 1.0; sign_flip[sign_flip<0.5] = -1.0
     
     batch_EigVals = batch_graphs.ndata['EigVals'].to(device)
-    print("DIMS: ", features.size(), labels.size())
+    print("DIMS: ", features.size(), labels.size(), g.edata['real'].size())
     batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
 
     loss = model.loss(batch_scores[train_mask], batch_labels[train_mask])
@@ -61,7 +61,6 @@ def evaluate_network(model, device, g, epoch, LPE, val_or_test="test"):
         train_mask, val_mask = g.ndata["train_mask"], g.ndata["val_mask"]
         features = g.ndata["feat"]
         labels = g.ndata["label"]
-        optimizer.zero_grad()
 
         batch_graphs = g.to(device)
         batch_x = features.to(device)
@@ -70,7 +69,7 @@ def evaluate_network(model, device, g, epoch, LPE, val_or_test="test"):
         if LPE == 'node':
             batch_EigVecs = g.ndata['EigVecs'].to(device)
             batch_EigVals = g.ndata['EigVals'].to(device)
-            batch_scores = model.forward(g, x, batch_EigVecs, batch_EigVals)
+            batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
                 
             if val_or_test == "test":
                 loss = model.loss(batch_scores[test_mask], batch_labels[test_mask])

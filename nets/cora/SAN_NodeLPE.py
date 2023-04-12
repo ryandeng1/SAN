@@ -82,7 +82,7 @@ class SAN_NodeLPE(nn.Module):
         PosEnc = torch.nansum(PosEnc, 0, keepdim=False)
 
         #Concatenate learned PE to input embedding
-        print("before cat: ", h.size(), PosEnc.size())
+        print("before cat: ", h.size(), PosEnc.size(), g.edata['real'].size())
         h = torch.cat((h, PosEnc), 1)
         
         h = self.in_feat_dropout(h)

@@ -124,12 +124,9 @@ def make_full_graph(g):
     #Populate edge features w/ 0s
     full_g.edata['feat']=torch.zeros(full_g.number_of_edges(), dtype=torch.long)
     full_g.edata['real']=torch.zeros(full_g.number_of_edges(), dtype=torch.long)
-    
+
     #Copy real edge data over
-    # full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['feat'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
-    # full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['real'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
-    
-    print("EDGES: ", full_g.edges(), full_g.edata)
+    full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['real'] = torch.ones(g.number_of_edges(), dtype=torch.long)
     return full_g
 
 
