@@ -67,6 +67,9 @@ class CoraDataset(torch.utils.data.Dataset):
     def _add_edge_laplace_feats(self):
         self.g = add_edge_laplace_feats(self.g)
 
+    def create_random_projection_partition(self):
+        self.partitions = random_projection_partition(self.g)
+
 def laplace_decomp(g, max_freqs):
     # Laplacian
     n = g.number_of_nodes()
@@ -100,13 +103,14 @@ def laplace_decomp(g, max_freqs):
     #Save EigVals node features
     g.ndata['EigVals'] = EigVals.repeat(g.number_of_nodes(),1).unsqueeze(2)
     
-    print("LAPLACE DECOMP: ", g.ndata.keys())
     return g
 
 
 
 def make_full_graph(g):
+    return g
 
+    """
     
     full_g = dgl.from_networkx(nx.complete_graph(g.number_of_nodes()))
 
@@ -128,6 +132,7 @@ def make_full_graph(g):
     #Copy real edge data over
     full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['real'] = torch.ones(g.number_of_edges(), dtype=torch.long)
     return full_g
+    """
 
 
 def add_edge_laplace_feats(g):
@@ -148,7 +153,10 @@ def add_edge_laplace_feats(g):
     
     return g
 
-
+def random_projection_partition(g):
+    EigVecs = g.ndata['EigVecs']
+    EigVals = g.ndata['EigVals']
+    print(EigVecs, EigVecs.size())
 
 
     

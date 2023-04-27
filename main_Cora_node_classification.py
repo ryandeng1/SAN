@@ -76,6 +76,28 @@ def view_model_param(LPE, net_params):
 """
     TRAINING CODE
 """
+from dgl.nn import GraphConv
+
+
+class GCN(nn.Module):
+    def __init__(self, in_feats, h_feats, num_classes):
+        super(GCN, self).__init__()
+        self.conv1 = GraphConv(in_feats, h_feats)
+        self.conv2 = GraphConv(h_feats, num_classes)
+
+    def forward(self, g, in_feat):
+        h = self.conv1(g, in_feat)
+        h = F.relu(h)
+        h = self.conv2(g, h)
+        return h
+
+    def loss(self, pred, label):
+        # loss_fn = nn.CrossEntropyLoss()
+        # loss = loss_fn(pred, label)
+        loss = F.cross_entropy(pred, label)
+        return loss
+
+
 
 def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
     print("KEYS: ", dataset.g.ndata.keys())
@@ -103,7 +125,6 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
         dataset._add_edge_laplace_feats()
         print('Time taken to compute edge Laplace features: ',time.time()-st)
         
-    
     # trainset, valset, testset = dataset.train, dataset.val, dataset.test
     
     net_params['total_param'] = view_model_param(net_params['LPE'], net_params)
@@ -132,14 +153,21 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
     print("Number of Classes: ", net_params['n_classes'])
     
 
-    model = gnn_model(net_params['LPE'], net_params)
+    
+    # Create the model with given dimensions
+    model = GCN(dataset.g.ndata["feat"].shape[1], 16, dataset.dataset.num_classes)
+
+    # model = gnn_model(net_params['LPE'], net_params)
     model = model.to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=params['init_lr'], weight_decay=params['weight_decay'])
+    # optimizer = optim.Adam(model.parameters(), lr=params['init_lr'], weight_decay=params['weight_decay'])
+    optimizer = optim.AdamW(model.parameters(), lr=params['init_lr'], weight_decay=params['weight_decay'])
+    """
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
                                                      factor=params['lr_reduce_factor'],
                                                      patience=params['lr_schedule_patience'],
                                                      verbose=True)
+    """
     
     epoch_train_losses, epoch_val_losses = [], []
     epoch_train_accs, epoch_val_accs, epoch_test_accs = [], [], []
@@ -200,7 +228,7 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
                     if epoch_nb < epoch-1:
                         os.remove(file)
 
-                scheduler.step(epoch_val_loss)
+                # scheduler.step(epoch_val_loss)
 
                 if optimizer.param_groups[0]['lr'] < params['min_lr']:
                     print("\n!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
@@ -314,6 +342,7 @@ def main():
         out_dir = config['out_dir']
     # parameters
     params = config['params']
+    print("PARAMS: ", params)
     if args.seed is not None:
         params['seed'] = int(args.seed)
     if args.epochs is not None:

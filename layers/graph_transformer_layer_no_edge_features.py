@@ -145,7 +145,6 @@ class MultiHeadAttentionLayer(nn.Module):
     
     @nvtx.annotate("graph_transformer forward", color="red") 
     def forward(self, g, h):
-        
         Q_h = self.Q(h)
         K_h = self.K(h)
         
@@ -155,6 +154,54 @@ class MultiHeadAttentionLayer(nn.Module):
             
         V_h = self.V(h)
 
+        Q_h = Q_h.view(-1, self.num_heads, self.out_dim)
+        K_h = K_h.view(-1, self.num_heads, self.out_dim)
+        # weights_real = torch.einsum('ihd,jhd->ijh', Q_h, K_h)
+        weights_real = torch.einsum('ihd,jhd->ijh', K_h, Q_h) / np.sqrt(self.out_dim)
+
+        Q_2h = Q_2h.view(-1, self.num_heads, self.out_dim)
+        K_2h = K_2h.view(-1, self.num_heads, self.out_dim)
+        # weights_fake = torch.einsum('ihd,jhd->ijh', Q_2h, K_2h)
+        weights_fake = torch.einsum('ihd,jhd->ijh', K_2h, Q_2h) / np.sqrt(self.out_dim)
+
+        # real_ids = torch.nonzero(g.edata['real']).squeeze()
+        # real_src, real_dst = g.find_edges(real_ids)
+        real_src, real_dst = g.edges()
+
+        weights_real_exp = torch.exp(weights_real.clamp(-5, 5))/(self.gamma + 1)
+        weights_fake_exp = self.gamma * torch.exp(weights_fake.clamp(-5, 5)) / (self.gamma + 1)
+
+        weights_fake_exp[(real_src, real_dst)] = weights_real_exp[(real_src, real_dst)]
+
+        # set diagonal entries to 0
+        vertex_range = torch.arange(0, g.number_of_nodes())
+        weights_fake_exp[(vertex_range, vertex_range)] = 0
+        weights_final = weights_fake_exp.view(g.number_of_nodes(), g.number_of_nodes(), -1)
+        V_h_ = V_h.view(-1, self.num_heads, self.out_dim)
+        out = torch.einsum('ijh,ihd->jhd', weights_final, V_h_)
+
+        exp_sum = torch.sum(weights_final, dim=0, keepdim=True).view(g.number_of_nodes(), self.num_heads, 1)
+        exp_sum_ = exp_sum + torch.full_like(exp_sum, 1e-6)
+        h_out = out / exp_sum_
+
+        """
+        weights_real_exp = torch.exp(weights_real.clamp(-5, 5))/(self.gamma + 1)
+        weights_fake_exp = self.gamma * torch.exp(weights_fake.clamp(-5, 5)) / (self.gamma + 1)
+ 
+        # real_ids = torch.nonzero(g.edata['real'], as_tuple=True)
+        # fake_ids = torch.nonzero(g.edata['real']==0, as_tuple=True)
+        edges = g.edges()
+
+        # print(edges.size(), weights_real_exp.size(), weights_fake_exp.size())
+        weights_fake_exp[edges] = weights_real_exp[edges]
+
+        weights = np.sqrt(self.out_dim) * weights_fake_exp
+        # weights = torch.where(edges, weights_real_exp, weights_fake_exp)
+        # print("Weights: ", weights.size())
+
+        V_h = V_h.view(-1, self.num_heads, self.out_dim)
+        h_out = torch.einsum('ijh,ihd->ihd', weights, V_h)
+        # print("V_h size: ", V_h.size(), self.num_heads, self.out_dim)
         
         # Reshaping into [num_nodes, num_heads, feat_dim] to 
         # get projections for multi-head attention
@@ -171,7 +218,7 @@ class MultiHeadAttentionLayer(nn.Module):
         self.propagate_attention(g)
         
         h_out = g.ndata['wV'] / (g.ndata['z'] + torch.full_like(g.ndata['z'], 1e-6))
-        
+        """
         return h_out
     
 
@@ -216,9 +263,11 @@ class GraphTransformerLayer(nn.Module):
         
         # multi-head attention out
         h_attn_out = self.attention(g, h)
+        # print("H size: ", h_in1.size(), " output of attention: ", h_attn_out.size())
         
         #Concat multi-head outputs
-        h = h_attn_out.view(-1, self.out_channels)
+        # h = h_attn_out.view(-1, self.out_channels)
+        h = h_attn_out.reshape(-1, self.out_channels)
        
         h = F.dropout(h, self.dropout, training=self.training)
 

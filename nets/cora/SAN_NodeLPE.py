@@ -44,6 +44,8 @@ class SAN_NodeLPE(nn.Module):
 
         self.device = net_params['device']
         self.in_feat_dropout = nn.Dropout(in_feat_dropout)
+
+        print(self.in_feat_dropout, dropout)
         
         # self.embedding_h = nn.Embedding(in_dim_node, GT_hidden_dim-LPE_dim)#Remove some embedding dimensions to make room for concatenating laplace encoding
         self.embedding_h = nn.Linear(in_dim_node, GT_hidden_dim - LPE_dim)
@@ -82,7 +84,7 @@ class SAN_NodeLPE(nn.Module):
         PosEnc = torch.nansum(PosEnc, 0, keepdim=False)
 
         #Concatenate learned PE to input embedding
-        print("before cat: ", h.size(), PosEnc.size(), g.edata['real'].size())
+        # print("before cat: ", h.size(), PosEnc.size())
         h = torch.cat((h, PosEnc), 1)
         
         h = self.in_feat_dropout(h)
@@ -98,6 +100,11 @@ class SAN_NodeLPE(nn.Module):
     
     
     def loss(self, pred, label):
+        # loss_fn = nn.CrossEntropyLoss()
+        # loss = loss_fn(pred, label)
+        loss = F.cross_entropy(pred, label)
+        return loss
+
 
         # calculating label weights for weighted loss computation
         V = label.size(0)

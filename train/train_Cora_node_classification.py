@@ -7,14 +7,14 @@ import torch.nn as nn
 import math
 import dgl
 
-from train.metrics import accuracy_SBM as accuracy
+from train.metrics import accuracy_Cora as accuracy
 
 def train_epoch(model, optimizer, device, g, epoch, LPE):
     model.train()
     epoch_loss = 0
     epoch_train_acc = 0
 
-    train_mask, val_mask = g.ndata["train_mask"], g.ndata["val_mask"]
+    train_mask = g.ndata["train_mask"]
     features = g.ndata["feat"]
     labels = g.ndata["label"]
     optimizer.zero_grad()
@@ -37,14 +37,25 @@ def train_epoch(model, optimizer, device, g, epoch, LPE):
     sign_flip[sign_flip>=0.5] = 1.0; sign_flip[sign_flip<0.5] = -1.0
     
     batch_EigVals = batch_graphs.ndata['EigVals'].to(device)
-    print("DIMS: ", features.size(), labels.size(), g.edata['real'].size())
-    batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
+    # print("DIMS: ", features.size(), labels.size(), g.edata['real'].size())
+    # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
+    batch_scores = model.forward(batch_graphs, batch_x)
+    # print(torch.count_nonzero(torch.isnan(batch_scores)), torch.count_nonzero(torch.isinf(batch_scores)))
 
     loss = model.loss(batch_scores[train_mask], batch_labels[train_mask])
     loss.backward()
     optimizer.step()
     epoch_loss += loss.detach().item()
-    epoch_train_acc += accuracy(batch_scores[train_mask], batch_labels[train_mask])
+    # epoch_train_acc += accuracy(batch_scores[train_mask], batch_labels[train_mask])
+    pred = batch_scores.argmax(1)
+    train_acc = (pred[train_mask] == batch_labels[train_mask]).float().mean()
+    epoch_train_acc += train_acc
+    
+
+    """
+    for p in model.parameters():
+        print(p.grad.norm())
+    """
 
     return epoch_loss, epoch_train_acc, optimizer
 
@@ -55,7 +66,7 @@ def evaluate_network(model, device, g, epoch, LPE, val_or_test="test"):
     epoch_test_loss = 0
     epoch_test_acc = 0
 
-    train_mask, val_mask = g.ndata["train_mask"], g.ndata["val_mask"]
+    val_mask = g.ndata["val_mask"]
     test_mask = g.ndata["test_mask"]
     with torch.no_grad():
         train_mask, val_mask = g.ndata["train_mask"], g.ndata["val_mask"]
@@ -69,7 +80,8 @@ def evaluate_network(model, device, g, epoch, LPE, val_or_test="test"):
         if LPE == 'node':
             batch_EigVecs = g.ndata['EigVecs'].to(device)
             batch_EigVals = g.ndata['EigVals'].to(device)
-            batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
+            # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
+            batch_scores = model.forward(batch_graphs, batch_x)
                 
             if val_or_test == "test":
                 loss = model.loss(batch_scores[test_mask], batch_labels[test_mask])

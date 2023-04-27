@@ -50,6 +50,11 @@ def accuracy_SBM(scores, targets):
     acc = 100.* np.sum(pr_classes)/ float(nb_classes)
     return acc
 
+def accuracy_Cora(scores, targets):
+    scores = scores.detach().argmax(dim=1)
+    acc = (scores==targets).float().sum().item()
+    acc = acc / len(targets)
+    return acc
 
 def binary_f1_score(scores, targets):
     """Computes the F1 score using scikit-learn for binary class labels. 

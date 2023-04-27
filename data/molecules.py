@@ -20,13 +20,18 @@ import hashlib
 from dgl import save_graphs, load_graphs
 
 class MoleculeDGL(torch.utils.data.Dataset):
-    def __init__(self, data):
+    def __init__(self, data, num_to_use=-1):
         self.data = data
         self.graph_lists = []
         self.graph_labels = []
         # self.n_samples = len(self.data)
-        self.graph_lists = self.data[0]
-        self.graph_labels = self.data[1]['g_label'].tolist()
+        if num_to_use == -1:
+            self.graph_lists = self.data[0]
+            self.graph_labels = self.data[1]['g_label'].tolist()
+        else:
+            self.graph_lists = self.data[0][:num_to_use]
+            self.graph_labels = self.data[1]['g_label'].tolist()[:num_to_use]
+
         self.n_samples = len(self.graph_lists)
         # self._prepare()
 
@@ -170,7 +175,6 @@ def laplace_decomp(g, max_freqs):
 
 
 def make_full_graph(g):
-
     
     full_g = dgl.from_networkx(nx.complete_graph(g.number_of_nodes()))
 
@@ -189,8 +193,8 @@ def make_full_graph(g):
     
     #Copy real edge data over
     full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['feat'] = g.edata['feat']
+    x = torch.ones(g.edata['feat'].shape[0], dtype=torch.long)
     full_g.edges[g.edges(form='uv')[0].tolist(), g.edges(form='uv')[1].tolist()].data['real'] = torch.ones(g.edata['feat'].shape[0], dtype=torch.long) 
-    
     return full_g
 
 
@@ -226,7 +230,7 @@ class MoleculeDataset(torch.utils.data.Dataset):
         self.name = name
         data_dir = 'data/molecules/'
         train_ = load_graphs(data_dir + "ZincDGL_train.bin")
-        self.train = MoleculeDGL(train_)
+        self.train = MoleculeDGL(train_, num_to_use=1000)
         val_ = load_graphs(data_dir + "ZincDGL_valid.bin")
         self.val = MoleculeDGL(val_)
         test_ = load_graphs(data_dir + "ZincDGL_test.bin")
