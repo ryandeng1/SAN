@@ -1,7 +1,7 @@
 {
     "gpu": {
         "use": true,
-        "id": 1
+        "id": 0
     },
 
     "model": "GraphTransformer",
@@ -11,13 +11,13 @@
 
     "params": {
         "seed": 41,
-        "epochs": 3,
+        "epochs": 1000,
         "batch_size": 1,
-        "init_lr": 0.0003,
+        "init_lr": 0.005, 
         "lr_reduce_factor": 0.5,
-        "lr_schedule_patience": 20,
-        "min_lr": 1e-5,
-        "weight_decay": 0,
+        "lr_schedule_patience": 1000,
+        "min_lr": 1e-6,
+        "weight_decay": 5e-4,
         "print_epoch_interval": 5,
         "max_time": 24,
         "batch_accumulation": 2
@@ -32,19 +32,19 @@
 
         "LPE": "node",
         "LPE_layers": 3,
-        "LPE_dim": 16,
-        "LPE_n_heads": 4,
+        "LPE_dim": 64,
+        "LPE_n_heads": 8,
 
-        "GT_layers": 5,
-        "GT_hidden_dim": 16,
-        "GT_out_dim": 16,
-        "GT_n_heads": 4,
+        "GT_layers": 10,
+        "GT_hidden_dim": 128,
+        "GT_out_dim": 128,
+        "GT_n_heads": 8,
 
         "residual": true,
         "readout": "sum",
         "in_feat_dropout": 0.0,
-        "dropout": 0.2,
+        "dropout": 0.0,
         "layer_norm": false,
-        "batch_norm": true
+        "batch_norm": false
     }
 }
