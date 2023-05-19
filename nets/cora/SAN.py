@@ -9,7 +9,7 @@ import numpy as np
     Graph Transformer
     
 """
-from layers.graph_transformer_layer import GraphTransformerLayer
+from layers.graph_transformer_layer_no_edge_features import GraphTransformerLayer
 from layers.mlp_readout_layer import MLPReadout
 
 class SAN(nn.Module):
@@ -41,8 +41,9 @@ class SAN(nn.Module):
         self.device = net_params['device']
         self.in_feat_dropout = nn.Dropout(in_feat_dropout)
         
-        self.embedding_h = nn.Embedding(in_dim_node, GT_hidden_dim)
-        self.embedding_e = nn.Embedding(2, GT_hidden_dim)
+        # self.embedding_h = nn.Embedding(in_dim_node, GT_hidden_dim)
+        # self.embedding_e = nn.Embedding(2, GT_hidden_dim)
+        self.embedding_h = nn.Linear(in_dim_node, GT_hidden_dim)
 
         
         self.layers = nn.ModuleList([ GraphTransformerLayer(gamma, GT_hidden_dim, GT_hidden_dim, GT_n_heads, full_graph, dropout, self.layer_norm, self.batch_norm, self.residual) for _ in range(GT_layers-1) ])
@@ -52,17 +53,17 @@ class SAN(nn.Module):
         self.MLP_layer = MLPReadout(GT_out_dim, self.n_classes)
 
 
-    def forward(self, g, h, e):
+    def forward(self, g, h):
         
         # input embedding
         h=self.embedding_h(h)
         h = self.in_feat_dropout(h)
-        e = self.embedding_e(e)   
+        # e = self.embedding_e(e)   
         
         
         # GraphTransformer Layers
         for conv in self.layers:
-            h, e = conv(g, h, e)
+            h = conv(g, h)
             
         # output
         h_out = self.MLP_layer(h)
@@ -71,22 +72,8 @@ class SAN(nn.Module):
     
     
     def loss(self, pred, label):
-
-        # calculating label weights for weighted loss computation
-        V = label.size(0)
-        label_count = torch.bincount(label)
-        label_count = label_count[label_count.nonzero()].squeeze()
-        cluster_sizes = torch.zeros(self.n_classes).long().to(self.device)
-        cluster_sizes[torch.unique(label)] = label_count
-        weight = (V - cluster_sizes).float() / V
-        weight *= (cluster_sizes>0).float()
-        
-        # weighted cross-entropy for unbalanced classes
-        criterion = nn.CrossEntropyLoss(weight=weight)
-        loss = criterion(pred, label)
-
+        # loss_fn = nn.CrossEntropyLoss()
+        # loss = loss_fn(pred, label)
+        loss = F.cross_entropy(pred, label)
         return loss
-
-
-
         

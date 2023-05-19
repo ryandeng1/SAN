@@ -9,7 +9,8 @@ import dgl
 
 from train.metrics import accuracy_Cora as accuracy
 
-def train_epoch(model, optimizer, device, g, epoch, LPE):
+def train_epoch(model, optimizer, device, g, epoch, LPE, partitions=[], parents_dict={}, children_dict={}):
+    # print("train")
     model.train()
     epoch_loss = 0
     epoch_train_acc = 0
@@ -37,10 +38,29 @@ def train_epoch(model, optimizer, device, g, epoch, LPE):
     sign_flip[sign_flip>=0.5] = 1.0; sign_flip[sign_flip<0.5] = -1.0
     
     batch_EigVals = batch_graphs.ndata['EigVals'].to(device)
-    # print("DIMS: ", features.size(), labels.size(), g.edata['real'].size())
-    # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
-    batch_scores = model.forward(batch_graphs, batch_x)
-    # print(torch.count_nonzero(torch.isnan(batch_scores)), torch.count_nonzero(torch.isinf(batch_scores)))
+    batch_EigVecs = batch_EigVecs * sign_flip.unsqueeze(0)
+
+    # rw_probs = g.ndata['rw_probs'].to(device)
+    feat = []
+    for partition in partitions[-1]:
+        feat_partition = []
+        for graph in partition:
+            feat_partition.append(graph.ndata['feat'].to(device))
+        feat.append(feat_partition)
+
+    rw_probs = []
+    for level in range(len(partitions)):
+        rw_probs_level = []
+        for partition in partitions[level]:
+            rw_probs_partition = []
+            for graph in partition:
+                rw_probs_partition.append(graph.ndata['rw_probs'].to(device))
+            rw_probs_level.append(rw_probs_partition)
+        rw_probs.append(rw_probs_level)
+
+    batch_scores = model.forward(batch_graphs, feat, batch_EigVecs, batch_EigVals, rw_probs, partitions, parents_dict, children_dict)
+    # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals, rw_probs)
+    # batch_scores = model.forward(batch_graphs, batch_x)
 
     loss = model.loss(batch_scores[train_mask], batch_labels[train_mask])
     loss.backward()
@@ -48,19 +68,22 @@ def train_epoch(model, optimizer, device, g, epoch, LPE):
     epoch_loss += loss.detach().item()
     # epoch_train_acc += accuracy(batch_scores[train_mask], batch_labels[train_mask])
     pred = batch_scores.argmax(1)
-    train_acc = (pred[train_mask] == batch_labels[train_mask]).float().mean()
+    train_acc = (pred[train_mask] == batch_labels[train_mask]).float().mean().item()
     epoch_train_acc += train_acc
     
 
     """
-    for p in model.parameters():
+    params = list(model.parameters())
+    print("Num params: ", len(params))
+    for p in params:
         print(p.grad.norm())
     """
 
     return epoch_loss, epoch_train_acc, optimizer
 
 
-def evaluate_network(model, device, g, epoch, LPE, val_or_test="test"):
+def evaluate_network(model, device, g, epoch, LPE, partitions=[], parents_dict={}, children_dict={}, val_or_test="test"):
+    # print("evaluate network")
     
     model.eval()
     epoch_test_loss = 0
@@ -80,8 +103,26 @@ def evaluate_network(model, device, g, epoch, LPE, val_or_test="test"):
         if LPE == 'node':
             batch_EigVecs = g.ndata['EigVecs'].to(device)
             batch_EigVals = g.ndata['EigVals'].to(device)
-            # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals)
-            batch_scores = model.forward(batch_graphs, batch_x)
+            # rw_probs = g.ndata['rw_probs'].to(device)
+            rw_probs = []
+            for level in range(len(partitions)):
+                rw_probs_level = []
+                for partition in partitions[level]:
+                    rw_probs_partition = []
+                    for graph in partition:
+                        rw_probs_partition.append(graph.ndata['rw_probs'].to(device))
+                    rw_probs_level.append(rw_probs_partition)
+                rw_probs.append(rw_probs_level)
+            feat = []
+            for partition in partitions[-1]:
+                feat_partition = []
+                for graph in partition:
+                    feat_partition.append(graph.ndata['feat'].to(device))
+                feat.append(feat_partition)
+            batch_scores = model.forward(batch_graphs, feat, batch_EigVecs, batch_EigVals, rw_probs, partitions, parents_dict, children_dict)
+            # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals, rw_probs, partitions)
+            # batch_scores = model.forward(batch_graphs, batch_x, batch_EigVecs, batch_EigVals, rw_probs)
+            # batch_scores = model.forward(batch_graphs, batch_x)
                 
             if val_or_test == "test":
                 loss = model.loss(batch_scores[test_mask], batch_labels[test_mask])

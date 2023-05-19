@@ -33,6 +33,7 @@ class DotDict(dict):
 # from nets.SBMs_node_classification.load_net import gnn_model 
 from nets.cora.load_net import gnn_model 
 from data.data import LoadData 
+import data.cora
 
 
 
@@ -124,14 +125,49 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
         print("[!] Computing edge Laplace features..")
         dataset._add_edge_laplace_feats()
         print('Time taken to compute edge Laplace features: ',time.time()-st)
-        
-    # trainset, valset, testset = dataset.train, dataset.val, dataset.test
-    
+
     net_params['total_param'] = view_model_param(net_params['LPE'], net_params)
        
     root_log_dir, root_ckpt_dir, write_file_name, write_config_file = dirs
     device = net_params['device']
-    
+
+    # RW
+    rw_steps = [1, 2, 3, 4, 5]
+    dataset.get_rw_probs(rw_steps)
+    num_split = 3
+    num_levels = 2
+    graphs, node_cluster_info, coarse_graphs, parents_dict, children_dict = data.cora.get_hierarchy(dataset.g, num_split, num_levels, device)
+
+    res_graphs = coarse_graphs + [graphs[-1]]
+    for level in range(len(res_graphs)):
+        for partition in res_graphs[level]:
+            for graph in partition:
+                print("graph at level: ", level, " num nodes: ", graph.num_nodes())
+
+    """
+    partitions, node_cluster_info = data.cora.random_projection_partition(num_levels=num_levels_to_split, g=dataset.g)
+
+
+    coarsen_matrix = data.cora.get_coarsening_matrix(dataset.g, partitions, node_cluster_info, device)
+    """
+    # for rw_probs, laplacian encoding doesn't work too well
+    res = []
+    for level in range(len(res_graphs)):
+        res_level = []
+        for partition in res_graphs[level]:
+            res_partition = []
+            for graph in partition:
+                res_partition.append(data.cora.rw_probs(graph, rw_steps, graph.edges(), None, graph.num_nodes()))
+            res_level.append(res_partition)
+        res.append(res_level)
+
+    for level in range(len(res)):
+        for partition in res[level]:
+            for graph in partition:
+                print("AFTER graph at level: ", level, " num nodes: ", graph.num_nodes())
+    # res = res[::-1]
+
+    # trainset, valset, testset = dataset.train, dataset.val, dataset.test
     # Write network and optimization hyper-parameters in folder config/
     with open(write_config_file + '.txt', 'w') as f:
         f.write("""Dataset: {},\nModel: {}\n\nparams={}\n\nnet_params={}\n\n\nTotal Parameters: {}\n\n"""                .format(DATASET_NAME, MODEL_NAME, params, net_params, net_params['total_param']))
@@ -152,12 +188,12 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
     print("Test Graphs: ", dataset.g.ndata["test_mask"].sum())
     print("Number of Classes: ", net_params['n_classes'])
     
-
-    
     # Create the model with given dimensions
-    model = GCN(dataset.g.ndata["feat"].shape[1], 16, dataset.dataset.num_classes)
+    # model = GCN(dataset.g.ndata["feat"].shape[1], 32, dataset.dataset.num_classes)
 
     # model = gnn_model(net_params['LPE'], net_params)
+    # model = gnn_model('none', net_params)
+    model = gnn_model('hierarchical', net_params)
     model = model.to(device)
 
     # optimizer = optim.Adam(model.parameters(), lr=params['init_lr'], weight_decay=params['weight_decay'])
@@ -189,10 +225,10 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
                 start = time.time()
 
                 # epoch_train_loss, epoch_train_acc, optimizer = train_epoch(model, optimizer, device, train_loader, epoch, net_params['LPE'])
-                epoch_train_loss, epoch_train_acc, optimizer = train_epoch(model, optimizer, device, dataset.g, epoch, net_params['LPE'])
+                epoch_train_loss, epoch_train_acc, optimizer = train_epoch(model, optimizer, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict)
                     
-                epoch_val_loss, epoch_val_acc = evaluate_network(model, device, dataset.g, epoch, net_params['LPE'], "val")
-                _, epoch_test_acc = evaluate_network(model, device, dataset.g, epoch, net_params['LPE'], "test")    
+                epoch_val_loss, epoch_val_acc = evaluate_network(model, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict, val_or_test="val")
+                _, epoch_test_acc = evaluate_network(model, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict, val_or_test="test")    
                 
                 epoch_train_losses.append(epoch_train_loss)
                 epoch_val_losses.append(epoch_val_loss)

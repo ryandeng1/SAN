@@ -15,6 +15,9 @@ import networkx as nx
 import hashlib
 from dgl.data import CoraGraphDataset
 
+import torch_geometric
+from torch_geometric.utils import scatter, to_dense_adj
+
 
 class CoraDatasetDGL(torch.utils.data.Dataset):
 
@@ -70,6 +73,18 @@ class CoraDataset(torch.utils.data.Dataset):
     def create_random_projection_partition(self):
         self.partitions = random_projection_partition(self.g)
 
+    def get_rw_probs(self, num_steps):
+        edges = self.g.edges()
+        # rw_probs = get_rw_landing_probs(num_steps, edges, None, self.g.num_nodes())
+        # self.g.ndata['rw_probs'] = rw_probs 
+        self.g = rw_probs(self.g, num_steps, edges, None, self.g.num_nodes(), 0)
+
+def rw_probs(g, num_steps, edges, edge_weight=None, num_nodes=None, space_dim=0):
+    rw_probs = get_rw_landing_probs(num_steps, edges, edge_weight, num_nodes, space_dim)
+    g.ndata['rw_probs'] = rw_probs
+    return g
+
+
 def laplace_decomp(g, max_freqs):
     # Laplacian
     n = g.number_of_nodes()
@@ -102,9 +117,9 @@ def laplace_decomp(g, max_freqs):
     
     #Save EigVals node features
     g.ndata['EigVals'] = EigVals.repeat(g.number_of_nodes(),1).unsqueeze(2)
+    print("max eigvals: ", torch.max(g.ndata['EigVals']))
     
     return g
-
 
 
 def make_full_graph(g):
@@ -153,10 +168,133 @@ def add_edge_laplace_feats(g):
     
     return g
 
-def random_projection_partition(g):
-    EigVecs = g.ndata['EigVecs']
-    EigVals = g.ndata['EigVals']
-    print(EigVecs, EigVecs.size())
+# return only the bottom level of partitions, need to invoke this method multiple times
+def random_projection_partition(num_levels, g):
+    graphs = [[g]]
+    node_cluster_info = []
+    for i in range(num_levels - 1):
+        res = []
+        for j in range(len(graphs[i])):
+            graph = graphs[i][j]
+            EigVecs = graph.ndata['EigVecs']
+            EigVals = graph.ndata['EigVals']
+            rand_vec = torch.rand((EigVecs.size(1)), device=EigVecs.device)
+            rand_vec = EigVecs @ rand_vec
+            pos_nodes = (rand_vec > 0)
+            neg_nodes = (rand_vec <= 0)
+            # if i == 0, then graph is g, so look at its nodes rather than the parent nodes
+            if i != 0:
+                pos_nodes = graph.ndata[dgl.NID][pos_nodes]
+                neg_nodes = graph.ndata[dgl.NID][neg_nodes]
+
+            pos_nodes_graph = g.subgraph(pos_nodes)
+            neg_nodes_graph = g.subgraph(neg_nodes)
+            res.extend([pos_nodes_graph, neg_nodes_graph])
+        graphs.append(res)
+
+    # technically only need to look at the "bottom" level
+    last_level_graphs = [graph for graph in graphs[-1] if graph.number_of_nodes() > 0]
+    for idx, graph in enumerate(last_level_graphs):
+        for node in graph.ndata[dgl.NID]:
+            node_cluster_info.append((node.item(), idx))
+
+    # return lowest level of hierarchy as this acts as one "level" in the grand scheme of things
+    # return graphs[-1], node_cluster_info
+    return last_level_graphs, node_cluster_info
+
+def get_coarsening_matrix(g, partitions, node_cluster_info, device):
+    coarsen_operator = torch.zeros((g.number_of_nodes(), len(partitions)), device=device)
+    idx = torch.tensor(node_cluster_info, device=device)
+    coarsen_operator[idx[:, 0], idx[:, 1]] = 1
+
+    node_to_cluster = {}
+    for node, cluster_idx in node_cluster_info:
+        node_to_cluster[node] = cluster_idx
+
+    adj = g.adj().to(device)
+    intermediate = torch.sparse.mm(adj, coarsen_operator)
+    coarsen_matrix = torch.mm(torch.transpose(coarsen_operator, 0, 1), intermediate)
+    coarsen_matrix = (coarsen_matrix > 0).float()
+
+    # test if matrix is valid
+    start_tensor, end_tensor = g.edges()
+    start_list = start_tensor.tolist()
+    end_list = end_tensor.tolist()
+    for start, end in zip(start_list, end_list):
+        cluster_start = int(coarsen_operator[start][node_to_cluster[start]].item())
+        cluster_end = int(coarsen_operator[start][node_to_cluster[end]].item())
+        if cluster_start != cluster_end:
+            assert(coarsen_matrix[cluster_start][cluster_end].item() == 1)
+
+    # zero out diagonal entries
+    return coarsen_matrix - torch.eye(len(partitions), device=device)
+    # return coarsen_matrix
+
+# return the hierarchy along with node_cluster_info
+def get_hierarchy(g, num_split, num_levels, device):
+    res_graphs = [[[g]]]
+    res_node_cluster_info = [[None]]
+    parents = {}
+    children = {}
+    res_coarse_graphs = []
+    for i in range(1, num_levels):
+        curr_level_graphs = []
+        curr_level_node_cluster_info = []
+        curr_level_coarse_graphs = []
+        start = res_graphs[i - 1]
+        for partition_idx, partition in enumerate(start):
+            coarse_graphs_per_partition = []
+            for graph_idx, graph in enumerate(partition):
+                partitions, node_cluster_info = random_projection_partition(num_split, graph)
+                curr_level_graphs.append(partitions)
+                curr_level_node_cluster_info.append(node_cluster_info)
+                parents[(i, len(curr_level_graphs) - 1)] = (i - 1, partition_idx, graph_idx)
+                children[(i - 1, partition_idx, graph_idx)] = (i, len(curr_level_graphs) - 1)
+
+
+                # parents[(num_levels - i - 1, len(curr_level_graphs) - 1)] = (i + 1, partition_idx, graph_idx)
+
+                coarsening_matrix = get_coarsening_matrix(graph, partitions, node_cluster_info, device)
+                tmp = torch.nonzero(coarsening_matrix)
+                src, dst = tmp[:, 0], tmp[:, 1]
+                print("check size: ", src.size(), dst.size())
+                # src, dst = torch.nonzero(coarsening_matrix).cpu().detach().numpy()
+                coarse_graph = dgl.graph((src, dst))
+                # coarse_graph = dgl.graph(torch.nonzero(coarsening_matrix))
+                # coarse_graphs.append(coarse_graph)
+                coarse_graphs_per_partition.append(coarse_graph)
+
+            curr_level_coarse_graphs.append(coarse_graphs_per_partition)
+
+        res_coarse_graphs.append(curr_level_coarse_graphs) 
+        # start = [item for sublist in curr_level_graphs for item in sublist] 
+        res_graphs.append(curr_level_graphs)
+        res_node_cluster_info.append(curr_level_node_cluster_info)
+
+    # print("check hierarchy: ", len(res_graphs), [type(e) for e in res_graphs])
+    """
+    res_coarsening_mat= [[None]]
+    for i in range(1, len(res_graphs)):
+        # partitions is a set of partitions
+        curr_level_coarsening_mat = []
+        num_partitions_prev_level = len(res_graphs[i - 1])
+        for j in range(len(res_graphs[i])):
+            parent_idx = parents[(i, j)]
+            parent = res_graphs[parent_idx[0]][parent_idx[1]][parent_idx[2]]
+            partitions = res_graphs[i][j]
+            node_cluster_info = res_node_cluster_info[i][j]
+            print("parent: ", parent)
+            coarsening_matrix = get_coarsening_matrix(parent, partitions, node_cluster_info, device)
+            curr_level_coarsening_mat.append(coarsening_matrix) 
+
+        res_coarsening_mat.append(curr_level_coarsening_mat)
+    """
+
+    return res_graphs, res_node_cluster_info, res_coarse_graphs, parents, children
+
+
+
+
 
 
     
@@ -206,3 +344,57 @@ class SBMsDataset(torch.utils.data.Dataset):
         self.train.graph_lists = [add_edge_laplace_feats(g) for g in self.train.graph_lists]
         self.val.graph_lists = [add_edge_laplace_feats(g) for g in self.val.graph_lists]
         self.test.graph_lists = [add_edge_laplace_feats(g) for g in self.test.graph_lists]  
+
+
+def get_rw_landing_probs(ksteps, edge_index, edge_weight=None,
+                         num_nodes=None, space_dim=0):
+    """Compute Random Walk landing probabilities for given list of K steps.
+
+    Args:
+        ksteps: List of k-steps for which to compute the RW landings
+        edge_index: PyG sparse representation of the graph
+        edge_weight: (optional) Edge weights
+        num_nodes: (optional) Number of nodes in the graph
+        space_dim: (optional) Estimated dimensionality of the space. Used to
+            correct the random-walk diagonal by a factor `k^(space_dim/2)`.
+            In euclidean space, this correction means that the height of
+            the gaussian distribution stays almost constant across the number of
+            steps, if `space_dim` is the dimension of the euclidean space.
+
+    Returns:
+        2D Tensor with shape (num_nodes, len(ksteps)) with RW landing probs
+    """
+    if type(ksteps) != list:
+        ksteps = [ksteps]
+    source, dest = edge_index[0], edge_index[1]
+    edge_tensor = torch.stack((source, dest)).to(source.device)
+    if edge_weight is None:
+        edge_weight = torch.ones(edge_tensor.size(1), device=source.device)
+
+    assert(num_nodes is not None)
+    deg = scatter(edge_weight, source, dim=0, dim_size=num_nodes, reduce='sum')  # Out degrees.
+    deg_inv = deg.pow(-1.)
+    deg_inv.masked_fill_(deg_inv == float('inf'), 0)
+
+    if edge_tensor.numel() == 0:
+        # P = edge_index.new_zeros((1, num_nodes, num_nodes))
+        P = edge_tensor.new_zeros((1, num_nodes, num_nodes))
+    else:
+        # P = D^-1 * A
+        # P = torch.diag(deg_inv) @ to_dense_adj(edge_index, max_num_nodes=num_nodes)  # 1 x (Num nodes) x (Num nodes)
+        P = torch.diag(deg_inv) @ to_dense_adj(edge_tensor, max_num_nodes=num_nodes)  # 1 x (Num nodes) x (Num nodes)
+    rws = []
+    if ksteps == list(range(min(ksteps), max(ksteps) + 1)):
+        # Efficient way if ksteps are a consecutive sequence (most of the time the case)
+        Pk = P.clone().detach().matrix_power(min(ksteps))
+        for k in range(min(ksteps), max(ksteps) + 1):
+            rws.append(torch.diagonal(Pk, dim1=-2, dim2=-1) * \
+                       (k ** (space_dim / 2)))
+            Pk = Pk @ P
+    else:
+        # Explicitly raising P to power k for each k \in ksteps.
+        for k in ksteps:
+            rws.append(torch.diagonal(P.matrix_power(k), dim1=-2, dim2=-1) * \
+                       (k ** (space_dim / 2)))
+    rw_landing = torch.cat(rws, dim=0).transpose(0, 1)  # (Num nodes) x (K steps)
+    return rw_landing

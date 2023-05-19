@@ -9,6 +9,7 @@ import numpy as np
     Graph Transformer
     
 """
+
 # from layers.graph_transformer_layer import GraphTransformerLayer
 from layers.graph_transformer_layer_no_edge_features import GraphTransformerLayer
 from layers.mlp_readout_layer import MLPReadout
@@ -45,8 +46,6 @@ class SAN_NodeLPE(nn.Module):
         self.device = net_params['device']
         self.in_feat_dropout = nn.Dropout(in_feat_dropout)
 
-        print(self.in_feat_dropout, dropout)
-        
         # self.embedding_h = nn.Embedding(in_dim_node, GT_hidden_dim-LPE_dim)#Remove some embedding dimensions to make room for concatenating laplace encoding
         self.embedding_h = nn.Linear(in_dim_node, GT_hidden_dim - LPE_dim)
         self.linear_A = nn.Linear(2, LPE_dim)
@@ -61,9 +60,28 @@ class SAN_NodeLPE(nn.Module):
         self.MLP_layer = MLPReadout(GT_out_dim, self.n_classes)
 
 
-    def forward(self, g, h, EigVecs, EigVals):
+        # Using a different type of encoder, kernel_pos_encoder
+        self.dim_in = in_dim_node
+        self.dim_pe = LPE_dim
+        self.num_rw_steps = 5
+        self.n_layers = LPE_layers
+        self.linear_x = nn.Linear(self.dim_in, GT_hidden_dim - self.dim_pe)
+
+        pe_layers = []
+        pe_layers.append(nn.Linear(self.num_rw_steps, 2 * self.dim_pe))
+        pe_layers.append(nn.ReLU())
+        for _ in range(self.n_layers - 2):
+            pe_layers.append(nn.Linear(2 * self.dim_pe, 2 * self.dim_pe))
+            pe_layers.append(nn.ReLU())
+
+        pe_layers.append(nn.Linear(2 * self.dim_pe, self.dim_pe))
+        pe_layers.append(nn.ReLU())
+        self.pe_encoder = nn.Sequential(*pe_layers)
+
+    def forward(self, g, h, EigVecs, EigVals, rw_probs):
         # input embedding
         h = self.embedding_h(h)
+        """
         # e = self.embedding_e(e) 
           
         PosEnc = torch.cat((EigVecs.unsqueeze(2), EigVals), dim=2).float() # (Num nodes) x (Num Eigenvectors) x 2
@@ -82,6 +100,10 @@ class SAN_NodeLPE(nn.Module):
         
         #Sum pooling
         PosEnc = torch.nansum(PosEnc, 0, keepdim=False)
+        """
+
+        # rw_probs = g.ndata["rw_probs"]
+        PosEnc = self.pe_encoder(rw_probs)
 
         #Concatenate learned PE to input embedding
         # print("before cat: ", h.size(), PosEnc.size())
@@ -105,22 +127,3 @@ class SAN_NodeLPE(nn.Module):
         loss = F.cross_entropy(pred, label)
         return loss
 
-
-        # calculating label weights for weighted loss computation
-        V = label.size(0)
-        label_count = torch.bincount(label)
-        label_count = label_count[label_count.nonzero()].squeeze()
-        cluster_sizes = torch.zeros(self.n_classes).long().to(self.device)
-        cluster_sizes[torch.unique(label)] = label_count
-        weight = (V - cluster_sizes).float() / V
-        weight *= (cluster_sizes>0).float()
-        
-        # weighted cross-entropy for unbalanced classes
-        criterion = nn.CrossEntropyLoss(weight=weight)
-        loss = criterion(pred, label)
-
-        return loss
-
-
-
-        
