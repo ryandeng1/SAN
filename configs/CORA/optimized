@@ -13,9 +13,9 @@
         "seed": 41,
         "epochs": 1000,
         "batch_size": 1,
-        "init_lr": 0.005, 
+        "init_lr": 0.001, 
         "lr_reduce_factor": 0.5,
-        "lr_schedule_patience": 1000,
+        "lr_schedule_patience": 50,
         "min_lr": 1e-6,
         "weight_decay": 5e-4,
         "print_epoch_interval": 5,
@@ -25,25 +25,25 @@
 
     "net_params": {
         "full_graph": true,
-        "gamma": 1e-6,
-        "m": 10,
+        "gamma": 1e-5,
+        "m": 100,
         
         "extra_mlp": false,
 
         "LPE": "node",
         "LPE_layers": 3,
-        "LPE_dim": 64,
-        "LPE_n_heads": 8,
+        "LPE_dim": 32,
+        "LPE_n_heads": 4,
 
-        "GT_layers": 10,
-        "GT_hidden_dim": 128,
-        "GT_out_dim": 128,
+        "GT_layers": 3,
+        "GT_hidden_dim": 304,
+        "GT_out_dim": 304,
         "GT_n_heads": 8,
 
         "residual": true,
         "readout": "sum",
         "in_feat_dropout": 0.0,
-        "dropout": 0.0,
+        "dropout": 0.5,
         "layer_norm": false,
         "batch_norm": false
     }

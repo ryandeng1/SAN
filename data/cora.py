@@ -60,6 +60,8 @@ class CoraDataset(torch.utils.data.Dataset):
         self.dataset = dataset
         self.g = dataset[0]
         self.name = "CORA"
+        a = self.g.adjacency_matrix().to_dense()
+        print("ADJ SYMMETRIC??? ", torch.all(a.transpose(0, 1) == a))
 
     def _laplace_decomp(self, max_freqs):
         self.g = laplace_decomp(self.g, max_freqs)
@@ -74,12 +76,15 @@ class CoraDataset(torch.utils.data.Dataset):
         self.partitions = random_projection_partition(self.g)
 
     def get_rw_probs(self, num_steps):
-        edges = self.g.edges()
+        # edges = self.g.edges()
         # rw_probs = get_rw_landing_probs(num_steps, edges, None, self.g.num_nodes())
         # self.g.ndata['rw_probs'] = rw_probs 
-        self.g = rw_probs(self.g, num_steps, edges, None, self.g.num_nodes(), 0)
+        # self.g = rw_probs(self.g, num_steps, edges, None, self.g.num_nodes(), 0)
+        rw_probs = dgl.random_walk_pe(self.g, num_steps)
+        self.g.ndata['rw_probs'] = rw_probs
 
 def rw_probs(g, num_steps, edges, edge_weight=None, num_nodes=None, space_dim=0):
+    return g
     rw_probs = get_rw_landing_probs(num_steps, edges, edge_weight, num_nodes, space_dim)
     g.ndata['rw_probs'] = rw_probs
     return g
@@ -90,6 +95,8 @@ def laplace_decomp(g, max_freqs):
     n = g.number_of_nodes()
     # A = g.adjacency_matrix_scipy(return_edge_ids=False).astype(float)
     A = g.adjacency_matrix(scipy_fmt="csr").astype(float)
+
+    
     N = sp.diags(dgl.backend.asnumpy(g.in_degrees()).clip(1) ** -0.5, dtype=float)
     L = sp.eye(g.number_of_nodes()) - N * A * N
 
@@ -100,7 +107,7 @@ def laplace_decomp(g, max_freqs):
     # Normalize and pad EigenVectors
     EigVecs = torch.from_numpy(EigVecs).float()
     EigVecs = F.normalize(EigVecs, p=2, dim=1, eps=1e-12, out=None)
-    
+
     if n<max_freqs:
         g.ndata['EigVecs'] = F.pad(EigVecs, (0, max_freqs-n), value=float('nan'))
     else:
@@ -117,8 +124,6 @@ def laplace_decomp(g, max_freqs):
     
     #Save EigVals node features
     g.ndata['EigVals'] = EigVals.repeat(g.number_of_nodes(),1).unsqueeze(2)
-    print("max eigvals: ", torch.max(g.ndata['EigVals']))
-    
     return g
 
 
@@ -257,7 +262,7 @@ def get_hierarchy(g, num_split, num_levels, device):
                 coarsening_matrix = get_coarsening_matrix(graph, partitions, node_cluster_info, device)
                 tmp = torch.nonzero(coarsening_matrix)
                 src, dst = tmp[:, 0], tmp[:, 1]
-                print("check size: ", src.size(), dst.size())
+                # print("check size: ", src.size(), dst.size())
                 # src, dst = torch.nonzero(coarsening_matrix).cpu().detach().numpy()
                 coarse_graph = dgl.graph((src, dst))
                 # coarse_graph = dgl.graph(torch.nonzero(coarsening_matrix))

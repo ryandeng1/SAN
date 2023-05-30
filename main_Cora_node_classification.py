@@ -59,6 +59,7 @@ def gpu_setup(use_gpu, gpu_id):
     VIEWING ENCODING TYPE AND NUM PARAMS
 """
 def view_model_param(LPE, net_params):
+    return 0
     model = gnn_model(LPE, net_params)
     total_param = 0
     print("MODEL DETAILS:\n")
@@ -81,28 +82,32 @@ from dgl.nn import GraphConv
 
 
 class GCN(nn.Module):
-    def __init__(self, in_feats, h_feats, num_classes):
+    def __init__(self, in_feats, h_feats, num_classes, dropout):
         super(GCN, self).__init__()
-        self.conv1 = GraphConv(in_feats, h_feats)
-        self.conv2 = GraphConv(h_feats, num_classes)
+        self.layers = nn.ModuleList()
+        # two-layer GCN
+        self.layers.append(
+            GraphConv(in_feats, h_feats, activation=F.relu)
+        )
+        self.layers.append(GraphConv(h_feats, num_classes))
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, g, in_feat):
-        h = self.conv1(g, in_feat)
-        h = F.relu(h)
-        h = self.conv2(g, h)
+        h = in_feat
+        for i, layer in enumerate(self.layers):
+            if i != 0:
+                h = self.dropout(h)
+            h = layer(g, h)
         return h
 
     def loss(self, pred, label):
-        # loss_fn = nn.CrossEntropyLoss()
-        # loss = loss_fn(pred, label)
-        loss = F.cross_entropy(pred, label)
+        loss_fn = nn.CrossEntropyLoss()
+        loss = loss_fn(pred, label)
         return loss
 
 
 
 def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
-    print("KEYS: ", dataset.g.ndata.keys())
-    
     start0 = time.time()
     per_epoch_time = []
     
@@ -132,24 +137,20 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
     device = net_params['device']
 
     # RW
-    rw_steps = [1, 2, 3, 4, 5]
+    # unfortunately, this is also hardcoded in nets/cora/SAN_NodeLPE.py, so these two have to match in order for the code not to error
+    rw_steps = 16
     dataset.get_rw_probs(rw_steps)
+
+    # the following code can be ignored for now
     num_split = 3
     num_levels = 2
     graphs, node_cluster_info, coarse_graphs, parents_dict, children_dict = data.cora.get_hierarchy(dataset.g, num_split, num_levels, device)
-
     res_graphs = coarse_graphs + [graphs[-1]]
-    for level in range(len(res_graphs)):
-        for partition in res_graphs[level]:
-            for graph in partition:
-                print("graph at level: ", level, " num nodes: ", graph.num_nodes())
 
-    """
-    partitions, node_cluster_info = data.cora.random_projection_partition(num_levels=num_levels_to_split, g=dataset.g)
+    # eigvecs, eigvals = dgl.laplacian_pe(dataset.g, net_params['m'], padding=True, return_eigval=True)
+    # eigvals = eigvals.repeat(dataset.g.number_of_nodes(),1).unsqueeze(2)
+    eigvecs, eigvals = None, None
 
-
-    coarsen_matrix = data.cora.get_coarsening_matrix(dataset.g, partitions, node_cluster_info, device)
-    """
     # for rw_probs, laplacian encoding doesn't work too well
     res = []
     for level in range(len(res_graphs)):
@@ -160,12 +161,6 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
                 res_partition.append(data.cora.rw_probs(graph, rw_steps, graph.edges(), None, graph.num_nodes()))
             res_level.append(res_partition)
         res.append(res_level)
-
-    for level in range(len(res)):
-        for partition in res[level]:
-            for graph in partition:
-                print("AFTER graph at level: ", level, " num nodes: ", graph.num_nodes())
-    # res = res[::-1]
 
     # trainset, valset, testset = dataset.train, dataset.val, dataset.test
     # Write network and optimization hyper-parameters in folder config/
@@ -189,21 +184,19 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
     print("Number of Classes: ", net_params['n_classes'])
     
     # Create the model with given dimensions
-    # model = GCN(dataset.g.ndata["feat"].shape[1], 32, dataset.dataset.num_classes)
+    # model = GCN(dataset.g.ndata["feat"].shape[1], 16, dataset.dataset.num_classes, net_params['dropout'])
 
-    # model = gnn_model(net_params['LPE'], net_params)
+    model = gnn_model(net_params['LPE'], net_params)
     # model = gnn_model('none', net_params)
-    model = gnn_model('hierarchical', net_params)
+    # model = gnn_model('hierarchical', net_params)
     model = model.to(device)
 
     # optimizer = optim.Adam(model.parameters(), lr=params['init_lr'], weight_decay=params['weight_decay'])
     optimizer = optim.AdamW(model.parameters(), lr=params['init_lr'], weight_decay=params['weight_decay'])
-    """
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
                                                      factor=params['lr_reduce_factor'],
                                                      patience=params['lr_schedule_patience'],
                                                      verbose=True)
-    """
     
     epoch_train_losses, epoch_val_losses = [], []
     epoch_train_accs, epoch_val_accs, epoch_test_accs = [], [], []
@@ -225,7 +218,7 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
                 start = time.time()
 
                 # epoch_train_loss, epoch_train_acc, optimizer = train_epoch(model, optimizer, device, train_loader, epoch, net_params['LPE'])
-                epoch_train_loss, epoch_train_acc, optimizer = train_epoch(model, optimizer, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict)
+                epoch_train_loss, epoch_train_acc, optimizer = train_epoch(model, optimizer, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict, eigvecs, eigvals)
                     
                 epoch_val_loss, epoch_val_acc = evaluate_network(model, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict, val_or_test="val")
                 _, epoch_test_acc = evaluate_network(model, device, dataset.g, epoch, net_params['LPE'], res, parents_dict, children_dict, val_or_test="test")    
@@ -264,7 +257,7 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
                     if epoch_nb < epoch-1:
                         os.remove(file)
 
-                # scheduler.step(epoch_val_loss)
+                scheduler.step(epoch_val_loss)
 
                 if optimizer.param_groups[0]['lr'] < params['min_lr']:
                     print("\n!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
@@ -281,7 +274,8 @@ def train_val_pipeline(MODEL_NAME, dataset, params, net_params, dirs):
         print('Exiting from training early because of KeyboardInterrupt')
     
     #Return test and train metrics at best val metric
-    index = epoch_val_accs.index(max(epoch_val_accs))
+    # index = epoch_val_accs.index(max(epoch_val_accs))
+    index = -1
     
     test_acc = epoch_test_accs[index]
     train_acc = epoch_train_accs[index]
@@ -378,7 +372,6 @@ def main():
         out_dir = config['out_dir']
     # parameters
     params = config['params']
-    print("PARAMS: ", params)
     if args.seed is not None:
         params['seed'] = int(args.seed)
     if args.epochs is not None:

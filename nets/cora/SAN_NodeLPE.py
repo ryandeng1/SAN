@@ -63,9 +63,10 @@ class SAN_NodeLPE(nn.Module):
         # Using a different type of encoder, kernel_pos_encoder
         self.dim_in = in_dim_node
         self.dim_pe = LPE_dim
-        self.num_rw_steps = 5
+        self.num_rw_steps = 16
         self.n_layers = LPE_layers
         self.linear_x = nn.Linear(self.dim_in, GT_hidden_dim - self.dim_pe)
+        self.linear_rw_probs = nn.Linear(self.num_rw_steps, self.dim_pe)
 
         pe_layers = []
         pe_layers.append(nn.Linear(self.num_rw_steps, 2 * self.dim_pe))
@@ -81,10 +82,10 @@ class SAN_NodeLPE(nn.Module):
     def forward(self, g, h, EigVecs, EigVals, rw_probs):
         # input embedding
         h = self.embedding_h(h)
-        """
         # e = self.embedding_e(e) 
-          
-        PosEnc = torch.cat((EigVecs.unsqueeze(2), EigVals), dim=2).float() # (Num nodes) x (Num Eigenvectors) x 2
+
+        """
+        PosEnc = torch.cat((EigVecs.unsqueeze(2), EigVals), dim=2).float()
         empty_mask = torch.isnan(PosEnc) # (Num nodes) x (Num Eigenvectors) x 2
         
         PosEnc[empty_mask] = 0 # (Num nodes) x (Num Eigenvectors) x 2
@@ -101,12 +102,34 @@ class SAN_NodeLPE(nn.Module):
         #Sum pooling
         PosEnc = torch.nansum(PosEnc, 0, keepdim=False)
         """
+          
 
-        # rw_probs = g.ndata["rw_probs"]
+        """
+        PosEnc = torch.cat((EigVecs.unsqueeze(2), EigVals), dim=2).float() # (Num nodes) x (Num Eigenvectors) x 2
+        empty_mask = torch.isnan(PosEnc) # (Num nodes) x (Num Eigenvectors) x 2
+        
+        PosEnc[empty_mask] = 0 # (Num nodes) x (Num Eigenvectors) x 2
+        PosEnc = torch.transpose(PosEnc, 0 ,1).float() # (Num Eigenvectors) x (Num nodes) x 2
+        PosEnc = self.linear_A(PosEnc) # (Num Eigenvectors) x (Num nodes) x PE_dim
+        
+        
+        #1st Transformer: Learned PE
+        PosEnc = self.PE_Transformer(src=PosEnc, src_key_padding_mask=empty_mask[:,:,0]) 
+
+        #remove masked sequences
+        PosEnc[torch.transpose(empty_mask, 0 ,1)[:,:,0]] = float('nan') 
+        
+        #Sum pooling
+        PosEnc = torch.nansum(PosEnc, 0, keepdim=False)
+
+        rw_probs = g.ndata["rw_probs"]
+        """
+
+        # rw_probs = self.linear_rw_probs(rw_probs)
+        # PosEnc = self.PE_Transformer(src=rw_probs)
         PosEnc = self.pe_encoder(rw_probs)
 
         #Concatenate learned PE to input embedding
-        # print("before cat: ", h.size(), PosEnc.size())
         h = torch.cat((h, PosEnc), 1)
         
         h = self.in_feat_dropout(h)
@@ -122,8 +145,6 @@ class SAN_NodeLPE(nn.Module):
     
     
     def loss(self, pred, label):
-        # loss_fn = nn.CrossEntropyLoss()
-        # loss = loss_fn(pred, label)
         loss = F.cross_entropy(pred, label)
         return loss
 
