@@ -15,3 +15,9 @@ Implementation of Spectral Attention Networks, a powerful GNN that leverages key
 * ```scripts``` contains scripts to reproduce ablation and SOTA comparison results. See ```scripts/reproduce.md``` for details.
 
 
+# Installation guide
+1. Create a conda environment: `conda create -n SAN python=3.8`
+2. Install pytorch (currently tested using Cuda 11.6) `conda install pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 pytorch-cuda=11.6 -c pytorch -c nvidia`
+3. Install dgl 1.1 to use their built in cora dataset `pip install --pre dgl -f https://data.dgl.ai/wheels-test/cu116/repo.html`
+4. Install remaining needed libraries `pip install tensorboardX tqdm networkx`, although this may not be comprehensive
+5. Script used to run on cora: `bash scripts/CORA/optimized`
