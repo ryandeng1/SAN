@@ -15,10 +15,6 @@ import networkx as nx
 import hashlib
 from dgl.data import CoraGraphDataset
 
-import torch_geometric
-from torch_geometric.utils import scatter, to_dense_adj
-
-
 class CoraDatasetDGL(torch.utils.data.Dataset):
 
     def __init__(self, g, mask_key):
@@ -61,7 +57,6 @@ class CoraDataset(torch.utils.data.Dataset):
         self.g = dataset[0]
         self.name = "CORA"
         a = self.g.adjacency_matrix().to_dense()
-        print("ADJ SYMMETRIC??? ", torch.all(a.transpose(0, 1) == a))
 
     def _laplace_decomp(self, max_freqs):
         self.g = laplace_decomp(self.g, max_freqs)
@@ -84,6 +79,7 @@ class CoraDataset(torch.utils.data.Dataset):
         self.g.ndata['rw_probs'] = rw_probs
 
 def rw_probs(g, num_steps, edges, edge_weight=None, num_nodes=None, space_dim=0):
+    assert(False, "For cora, should be calling dataset.get_rw_probs() instead of this function")
     return g
     rw_probs = get_rw_landing_probs(num_steps, edges, edge_weight, num_nodes, space_dim)
     g.ndata['rw_probs'] = rw_probs
@@ -272,87 +268,14 @@ def get_hierarchy(g, num_split, num_levels, device):
             curr_level_coarse_graphs.append(coarse_graphs_per_partition)
 
         res_coarse_graphs.append(curr_level_coarse_graphs) 
-        # start = [item for sublist in curr_level_graphs for item in sublist] 
         res_graphs.append(curr_level_graphs)
         res_node_cluster_info.append(curr_level_node_cluster_info)
 
-    # print("check hierarchy: ", len(res_graphs), [type(e) for e in res_graphs])
-    """
-    res_coarsening_mat= [[None]]
-    for i in range(1, len(res_graphs)):
-        # partitions is a set of partitions
-        curr_level_coarsening_mat = []
-        num_partitions_prev_level = len(res_graphs[i - 1])
-        for j in range(len(res_graphs[i])):
-            parent_idx = parents[(i, j)]
-            parent = res_graphs[parent_idx[0]][parent_idx[1]][parent_idx[2]]
-            partitions = res_graphs[i][j]
-            node_cluster_info = res_node_cluster_info[i][j]
-            print("parent: ", parent)
-            coarsening_matrix = get_coarsening_matrix(parent, partitions, node_cluster_info, device)
-            curr_level_coarsening_mat.append(coarsening_matrix) 
-
-        res_coarsening_mat.append(curr_level_coarsening_mat)
-    """
-
     return res_graphs, res_node_cluster_info, res_coarse_graphs, parents, children
-
-
-
-
-
-
-    
-class SBMsDataset(torch.utils.data.Dataset):
-
-    def __init__(self, name):
-        """
-            Loading SBM datasets
-        """
-        start = time.time()
-        print("[I] Loading dataset %s..." % (name))
-        self.name = name
-        data_dir = 'data/SBMs/'
-        with open(data_dir+name+'.pkl',"rb") as f:
-            f = pickle.load(f)
-            self.train = f[0]
-            self.val = f[1]
-            self.test = f[2]
-                
-        print('train, test, val sizes :',len(self.train),len(self.test),len(self.val))
-        print("[I] Finished loading.")
-        print("[I] Data load time: {:.4f}s".format(time.time()-start))
-
-
-    def collate(self, samples):
-
-        graphs, labels = map(list, zip(*samples))
-        labels = torch.cat(labels).long()
-        batched_graph = dgl.batch(graphs)
-        
-        return batched_graph, labels
-    
-
-    def _laplace_decomp(self, max_freqs):
-        self.train.graph_lists = [laplace_decomp(g, max_freqs) for g in self.train.graph_lists]
-        self.val.graph_lists = [laplace_decomp(g, max_freqs) for g in self.val.graph_lists]
-        self.test.graph_lists = [laplace_decomp(g, max_freqs) for g in self.test.graph_lists]
-    
-
-    def _make_full_graph(self):
-        self.train.graph_lists = [make_full_graph(g) for g in self.train.graph_lists]
-        self.val.graph_lists = [make_full_graph(g) for g in self.val.graph_lists]
-        self.test.graph_lists = [make_full_graph(g) for g in self.test.graph_lists]
-
-
-    def _add_edge_laplace_feats(self):
-        self.train.graph_lists = [add_edge_laplace_feats(g) for g in self.train.graph_lists]
-        self.val.graph_lists = [add_edge_laplace_feats(g) for g in self.val.graph_lists]
-        self.test.graph_lists = [add_edge_laplace_feats(g) for g in self.test.graph_lists]  
-
 
 def get_rw_landing_probs(ksteps, edge_index, edge_weight=None,
                          num_nodes=None, space_dim=0):
+    assert(False, "this function should not be called. Rw-probs, should use dgl's built-in function to obtain these positional encodings")
     """Compute Random Walk landing probabilities for given list of K steps.
 
     Args:
