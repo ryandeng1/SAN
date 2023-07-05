@@ -48,6 +48,7 @@ class SAN_NodeLPE(nn.Module):
 
         # self.embedding_h = nn.Embedding(in_dim_node, GT_hidden_dim-LPE_dim)#Remove some embedding dimensions to make room for concatenating laplace encoding
         self.embedding_h = nn.Linear(in_dim_node, GT_hidden_dim - LPE_dim)
+        # self.embedding_h = nn.Linear(in_dim_node, GT_hidden_dim)
         self.linear_A = nn.Linear(2, LPE_dim)
         
         encoder_layer = nn.TransformerEncoderLayer(d_model=LPE_dim, nhead=LPE_n_heads)
@@ -58,6 +59,8 @@ class SAN_NodeLPE(nn.Module):
         self.layers.append(GraphTransformerLayer(gamma, GT_hidden_dim, GT_out_dim, GT_n_heads, full_graph, dropout, self.layer_norm, self.batch_norm, self.residual))
 
         self.MLP_layer = MLPReadout(GT_out_dim, self.n_classes)
+
+        self.MLP_layer2 = nn.Linear(GT_out_dim, self.n_classes)
 
 
         # Using a different type of encoder, kernel_pos_encoder
@@ -129,7 +132,7 @@ class SAN_NodeLPE(nn.Module):
         # PosEnc = self.PE_Transformer(src=rw_probs)
         PosEnc = self.pe_encoder(rw_probs)
 
-        #Concatenate learned PE to input embedding
+        # Concatenate learned PE to input embedding
         h = torch.cat((h, PosEnc), 1)
         
         h = self.in_feat_dropout(h)
@@ -139,7 +142,8 @@ class SAN_NodeLPE(nn.Module):
             h = conv(g, h)
             
         # output
-        h_out = self.MLP_layer(h)
+        # h_out = self.MLP_layer(h)
+        h_out = self.MLP_layer2(h)
 
         return h_out
     
